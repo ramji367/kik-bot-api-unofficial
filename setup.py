@@ -49,7 +49,6 @@ setup(
         "python-dotenv",
         "PyYAML~=6.0.1",
         "defusedxml~=0.7.1",
-        "lxml~=4.9.3",
         "beautifulsoup4~=4.12.2",
         "colorama",
     ],

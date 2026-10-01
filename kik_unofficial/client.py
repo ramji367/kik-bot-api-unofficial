@@ -28,6 +28,7 @@ from kik_unofficial.utilities.kik_server_clock import KikServerClock
 from kik_unofficial.utilities.threading_utils import run_in_new_thread
 from kik_unofficial.datatypes.xmpp.base_elements import XMPPElement, XMPPResponse
 from kik_unofficial.http_requests import profile_pictures, content
+from kik_unofficial.http_requests.mobile_login import MobileLoginError, login as mobile_login
 from kik_unofficial.utilities.credential_utilities import random_device_id, random_android_id
 from kik_unofficial.utilities.logging_utils import set_up_basic_logging
 
@@ -166,10 +167,31 @@ class KikClient:
         """
         self.username = username
         self.password = password
-        login_request = login.LoginRequest(username, password, captcha_result, self.device_id, self.android_id)
+        if captcha_result:
+            self.log.info("Ignoring the old XMPP captcha answer. Current Kik login uses RECAPTCHA_TOKEN in .env.")
+        return self._login_with_mobile_api()
+
+    def _login_with_mobile_api(self) -> bool:
+        """
+        Password login against Kik's current account service.
+        The old XMPP login stanza is acknowledged and then ignored, so waiting on it hangs.
+        """
         login_type = "email" if "@" in self.username else "username"
-        self.log.info(f"Logging in with {login_type} '{username}' and a given password {'*' * len(password)}...")
-        return self._send_xmpp_element(login_request)
+        self.log.info(f"Logging in with {login_type} '{self.username}'...")
+        try:
+            result = mobile_login(self.username, self.password, self.device_id, self.android_id)
+        except MobileLoginError as exc:
+            self.log.error(str(exc))
+            self.is_permanent_disconnection = True
+            return False
+
+        self.username = result.username or self.username
+        self.kik_node = result.kik_node
+        self.kik_email = result.email
+        self.log.info(f"Logged in as {self.username}")
+        self.callback.on_login_ended(login.LoginResponse.from_account(result.kik_node, self.username, result.email))
+        self._establish_authenticated_session(result.kik_node)
+        return True
 
     def register(self, email: str, username: str, password: str, first_name: str, last_name: str, birthday: str, captcha_result: str = None):
         """
@@ -763,15 +785,12 @@ class KikClient:
                     self.authenticator.send_stanza()
                 self.callback.on_authenticated()
             elif self.should_login_on_connection:
-                self.login(self.username, self.password)
                 self.should_login_on_connection = False
+                if not self._login_with_mobile_api():
+                    return False
         else:
             error = login.ConnectionFailedResponse(k_element)
-            if error.is_auth_revoked:
-                # Force a login attempt
-                self.log.warning(f"auth revoked for {self.kik_node}, falling back to login attempt")
-                self.kik_node = None
-            elif error.is_bad_version:
+            if error.is_bad_version:
                 # Bad version
                 self.log.error(f"client received bad version error ({error.message}), shutting down.\n"
                                "Update the `kik_version_info` field in device_configuration.py to continue")
@@ -779,6 +798,10 @@ class KikClient:
             elif error.is_backoff:
                 # Backoff requested
                 self.log.warning(f"backoff received for {error.backoff_seconds}s, ignoring")
+            elif error.is_auth_revoked or self.kik_node:
+                # The saved node was rejected. Next attempt logs in with username and password.
+                self.log.warning(f"auth failed for {self.kik_node} ({error.message}), falling back to login")
+                self.kik_node = None
             self.callback.on_connection_failed(error)
         return connected
 
@@ -869,24 +892,43 @@ class KikClient:
         The Kik Connection thread main function.
         Initiates the asyncio loop and actually connects.
         """
-        # If there is already a connection going, then wait for it to stop
-        if self.connection and not self.connection.is_closed:
-            self.connection.close()
-            self.log.debug("Waiting for the previous connection to stop.")
-            while not self.connection.is_closed:
-                self.log.debug("Still waiting for the previous connection to stop.")
-                time.sleep(1)
+        while not self.is_permanent_disconnection:
+            # If there is already a connection going, then wait for it to stop
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
+                self.log.debug("Waiting for the previous connection to stop.")
+                while not self.connection.is_closed and not self.is_permanent_disconnection:
+                    self.log.debug("Still waiting for the previous connection to stop.")
+                    time.sleep(1)
 
-        self.log.info("Initiating the Kik Connection thread and connecting to kik server...")
+            if self.is_permanent_disconnection:
+                break
 
-        # create the connection and launch the asyncio loop
-        self.connection = KikConnection(self)
-        task = self.loop.create_task(self.connection.read_loop())
+            self.log.info("Initiating the Kik Connection thread and connecting to kik server...")
 
-        self.loop.run_until_complete(task)
-        self.log.debug("Main loop ended.")
-        self.callback.on_disconnected()
-        self._connect()
+            # A new loop each attempt. Reusing the old one hits
+            # "cannot schedule new futures after shutdown" on the next DNS
+            # lookup, and the old code then started another thread immediately.
+            previous_loop = getattr(self, "loop", None)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self.loop = loop
+            if previous_loop is not None and previous_loop is not loop and not previous_loop.is_closed() and not previous_loop.is_running():
+                previous_loop.close()
+
+            self.connection = KikConnection(self)
+            try:
+                loop.run_until_complete(self.connection.read_loop())
+            finally:
+                if not loop.is_closed():
+                    loop.close()
+
+            self.log.debug("Main loop ended.")
+            self.callback.on_disconnected()
+            if self.is_permanent_disconnection:
+                break
+            self.log.info("Connection lost. Reconnecting in 2 seconds.")
+            time.sleep(2)
 
     def get_jid(self, username_or_jid):
         if jid_utilities.is_pm_jid(username_or_jid):
