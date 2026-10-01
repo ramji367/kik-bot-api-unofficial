@@ -189,14 +189,13 @@ class CryptographicUtils:
 
     @staticmethod
     def get_kik_host_name():
-        # The android APK determines the host name for the XMPP domain
-        # by using the minor and major version numbers
-        # talk(major)(minor)0an.kik.com
-
+        # Older builds use talk(major)(minor)0an.kik.com.
+        # From Kik 17.10 onward that name is not published. The 17.23 app
+        # connects to the fixed host talk1600an.kik.com instead.
         split = kik_version_info["kik_version"].split(sep=".", maxsplit=3)
-        ret = "talk"
+        major = int(split[0])
+        minor = int(split[1])
+        if major > 17 or (major == 17 and minor >= 10):
+            return "talk1600an.kik.com"
 
-        for i in range(0, 2):
-            ret += split[i]
-
-        return ret + "0an.kik.com"
+        return "talk" + split[0] + split[1] + "0an.kik.com"

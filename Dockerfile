@@ -9,6 +9,6 @@ COPY setup* /app/
 RUN pip install /app
 
 COPY . /app
-COPY examples/echo_bot.py /app/bot.py
+COPY examples/machi_bot.py /app/bot.py
 
 CMD python bot.py

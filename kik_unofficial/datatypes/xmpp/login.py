@@ -85,6 +85,17 @@ class LoginResponse:
         self.first_name = data.query.first.text
         self.last_name = data.query.last.text
 
+    @classmethod
+    def from_account(cls, kik_node: str, username: str, email: str = ""):
+        response = cls.__new__(cls)
+        response.kik_node = kik_node
+        response.email = email
+        response.is_email_confirmed = False
+        response.username = username
+        response.first_name = ""
+        response.last_name = ""
+        return response
+
 
 class MakeAnonymousStreamInitTag(XMPPElement):
     def __init__(self, device_id=None, n=1):
@@ -197,11 +208,12 @@ class ConnectionFailedResponse:
         self.is_bad_version = is_tag_present(data, "badver")
 
         if self.is_auth_revoked:
-            self.message = data.noauth.msg.text
+            self.message = data.noauth.msg.text if data.noauth.msg else "authentication rejected"
         elif self.is_bad_version:
             self.message = data.badver.msg.text
         else:
-            self.message = ''
+            tags = [child.name for child in data.find_all(recursive=False) if getattr(child, "name", None)]
+            self.message = "kik rejected the connection" + (f" ({', '.join(tags)})" if tags else "")
 
         """True if a backoff was requested by Kik's server"""
         self.is_backoff = is_tag_present(data, "wait")

@@ -13,5 +13,7 @@ kik_version_15_49_info = {"kik_version": "15.49.0.27501", "classes_dex_sha1_dige
 kik_version_15_57_info = {"kik_version": "15.57.2.29235", "classes_dex_sha1_digest": "hA77Y2jUTVbpHRB9LosnnunQ1PY="}
 kik_version_15_60_info = {"kik_version": "15.60.1.29587", "classes_dex_sha1_digest": "FXxvP2QjSj+sXp+G1MqDdxz8Z51YjtqzFOQ7wlex0VM="}
 kik_version_17_0_info = {"kik_version": "17.0.0.31357", "classes_dex_sha1_digest": "Rm2No4v27p+pIF4DVwXJvXVvdds="}
+# SHA-256 of classes.dex from Kik 17.23.1.36904 (Play version, September 2026).
+kik_version_17_23_info = {"kik_version": "17.23.1.36904", "classes_dex_sha1_digest": "fS4P30iXgXpTyfqHCyTUP5h/sXAU30w+dgNHUeJwPyc="}
 
-kik_version_info = kik_version_17_0_info
+kik_version_info = kik_version_17_23_info
